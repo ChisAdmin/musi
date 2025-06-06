@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>시청자 화면</title>
+</head>
+<body>
+  <h2>공유된 화면 보기</h2>
+  <video id="viewer" autoplay playsinline style="width: 100%; border: 1px solid #aaa;"></video>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const video = document.getElementById('viewer');
+    let pc = new RTCPeerConnection();
+
+    pc.ontrack = (event) => {
+      video.srcObject = event.streams[0];
+    };
+
+    socket.on('offer', async (data) => {
+      await pc.setRemoteDescription(new RTCSessionDescription(data));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit('answer', pc.localDescription);
+    });
+
+    socket.on('candidate', async (candidate) => {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (e) {
+        console.error('Error adding candidate:', e);
+      }
+    });
+
+    socket.on('stop-sharing', () => {
+      video.srcObject = null;
+      alert('공유가 종료되었습니다.');
+    });
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit('candidate', event.candidate);
+      }
+    };
+  </script>
+</body>
+</html>

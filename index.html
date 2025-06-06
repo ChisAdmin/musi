@@ -1,95 +1,48 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>화면 공유</title>
-  <style>
-    body { font-family: sans-serif; text-align: center; }
-    video { width: 80%; margin-top: 10px; border: 1px solid #ccc; }
-    #stopBtn { margin-top: 10px; display: none; }
-  </style>
+  <meta charset="UTF-8">
+  <title>시청자 화면</title>
 </head>
 <body>
-  <h1>화면 공유</h1>
-  <video id="video" autoplay playsinline controls></video><br>
-  <button id="stopBtn">공유 중지</button>
+  <h2>공유된 화면 보기</h2>
+  <video id="viewer" autoplay playsinline style="width: 100%; border: 1px solid #aaa;"></video>
 
-  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
   <script>
-    const urlParams = new URLSearchParams(location.search);
-    const isAdmin = urlParams.get("admin") === "true";
-    const video = document.getElementById("video");
-    const stopBtn = document.getElementById("stopBtn");
-
     const socket = io();
+    const video = document.getElementById('viewer');
+    let pc = new RTCPeerConnection();
 
-    socket.emit("join", { isAdmin });
+    pc.ontrack = (event) => {
+      video.srcObject = event.streams[0];
+    };
 
-    const peerConnections = {};
-    let localStream = null;
+    socket.on('offer', async (data) => {
+      await pc.setRemoteDescription(new RTCSessionDescription(data));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit('answer', pc.localDescription);
+    });
 
-    async function startSharing() {
-      localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-      video.srcObject = localStream;
-      stopBtn.style.display = "inline";
+    socket.on('candidate', async (candidate) => {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (e) {
+        console.error('Error adding candidate:', e);
+      }
+    });
 
-      socket.on("new-viewer", async id => {
-        const pc = createPeerConnection(id);
-        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        socket.emit("offer", { to: id, offer });
-      });
-    }
+    socket.on('stop-sharing', () => {
+      video.srcObject = null;
+      alert('공유가 종료되었습니다.');
+    });
 
-    function createPeerConnection(id) {
-      const pc = new RTCPeerConnection();
-      peerConnections[id] = pc;
-
-      pc.onicecandidate = e => {
-        if (e.candidate) socket.emit("ice-candidate", { to: id, candidate: e.candidate });
-      };
-
-      return pc;
-    }
-
-    if (isAdmin) {
-      startSharing();
-      stopBtn.onclick = () => {
-        localStream.getTracks().forEach(track => track.stop());
-        Object.values(peerConnections).forEach(pc => pc.close());
-        socket.emit("stop-sharing");
-        location.reload();
-      };
-    } else {
-      const pc = new RTCPeerConnection();
-      pc.ontrack = e => {
-        video.srcObject = e.streams[0];
-      };
-
-      pc.onicecandidate = e => {
-        if (e.candidate) socket.emit("ice-candidate", { to: adminSocketId, candidate: e.candidate });
-      };
-
-      let adminSocketId = null;
-
-      socket.on("offer", async ({ from, offer }) => {
-        adminSocketId = from;
-        await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit("answer", { to: from, answer });
-      });
-
-      socket.on("ice-candidate", ({ from, candidate }) => {
-        pc.addIceCandidate(new RTCIceCandidate(candidate));
-      });
-
-      socket.on("stop-sharing", () => {
-        video.srcObject = null;
-        alert("공유가 중지되었습니다.");
-      });
-    }
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit('candidate', event.candidate);
+      }
+    };
   </script>
 </body>
 </html>
